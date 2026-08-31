@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Order Management System</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; background: #f7f7f5; color: #1a1a1a; }
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.1rem; margin-top: 2.5rem; border-bottom: 2px solid #ddd; padding-bottom: 0.4rem; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; background: white; }
+  th, td { text-align: left; padding: 0.6rem; border-bottom: 1px solid #eee; }
+  th { background: #eee; }
+  input, select, button { padding: 0.4rem 0.6rem; font-size: 0.95rem; }
+  button { cursor: pointer; background: #2563eb; color: white; border: none; border-radius: 4px; }
+  button:hover { background: #1d4ed8; }
+  button.secondary { background: #6b7280; }
+  .qty-input { width: 60px; }
+  #cart-list { list-style: none; padding: 0; }
+  #cart-list li { padding: 0.4rem 0; }
+  .customer-fields { display: flex; gap: 0.5rem; margin: 1rem 0; }
+  .customer-fields input { flex: 1; }
+  .status-badge { padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.85rem; }
+  .PENDING { background: #fef3c7; }
+  .PROCESSING { background: #dbeafe; }
+  .COMPLETED { background: #d1fae5; }
+  .CANCELLED { background: #fee2e2; }
+  #order-result { margin-top: 1rem; padding: 0.8rem; border-radius: 4px; }
+  .success { background: #d1fae5; }
+  .error { background: #fee2e2; }
+</style>
+</head>
+<body>
+
+<h1>Order Management System</h1>
+
+<h2>Products</h2>
+<table id="products-table">
+  <thead><tr><th>Product</th><th>Price</th><th>Stock</th><th>Qty</th><th></th></tr></thead>
+  <tbody id="products-body"></tbody>
+</table>
+
+<h2>Your Cart</h2>
+<ul id="cart-list"><li><em>Cart is empty</em></li></ul>
+
+<div class="customer-fields">
+  <input id="customer-name" placeholder="Your name">
+  <input id="customer-email" placeholder="Your email">
+</div>
+<button id="place-order-btn">Place Order</button>
+<div id="order-result" style="display:none"></div>
+
+<h2>Orders</h2>
+<table id="orders-table">
+  <thead><tr><th>ID</th><th>Customer</th><th>Total</th><th>Status</th><th>Update</th></tr></thead>
+  <tbody id="orders-body"></tbody>
+</table>
+
+<script>
+let products = [];
+let cart = {}; // productID -> quantity
+
+async function loadProducts() {
+  const res = await fetch('/api/products');
+  const json = await res.json();
+  products = json.data || [];
+  renderProducts();
+}
+
+function renderProducts() {
+  const body = document.getElementById('products-body');
+  body.innerHTML = '';
+  products.forEach(p => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${p.name}</td>
+      <td>RM ${p.price.toFixed(2)}</td>
+      <td>${p.stock}</td>
+      <td><input type="number" min="1" max="${p.stock}" value="1" class="qty-input" id="qty-${p.id}"></td>
+      <td><button onclick="addToCart(${p.id})">Add</button></td>
+    `;
+    body.appendChild(row);
+  });
+}
+
+function addToCart(productID) {
+  const qty = parseInt(document.getElementById('qty-' + productID).value, 10);
+  if (!qty || qty < 1) return;
+  cart[productID] = (cart[productID] || 0) + qty;
+  renderCart();
+}
+
+function renderCart() {
+  const list = document.getElementById('cart-list');
+  const entries = Object.entries(cart);
+  if (entries.length === 0) {
+    list.innerHTML = '<li><em>Cart is empty</em></li>';
+    return;
+  }
+  list.innerHTML = '';
+  entries.forEach(([productID, qty]) => {
+    const product = products.find(p => p.id == productID);
+    const li = document.createElement('li');
+    li.innerHTML = `${product ? product.name : 'Product ' + productID} x ${qty}
+      <button class="secondary" onclick="removeFromCart(${productID})">Remove</button>`;
+    list.appendChild(li);
+  });
+}
+
+function removeFromCart(productID) {
+  delete cart[productID];
+  renderCart();
+}
+
+async function placeOrder() {
+  const resultDiv = document.getElementById('order-result');
+  const items = Object.entries(cart).map(([productID, qty]) => ({
+    product_id: parseInt(productID, 10),
+    quantity: qty
+  }));
+
+  if (items.length === 0) {
+    showResult('Add at least one item to your cart first.', false);
+    return;
+  }
+
+  const body = {
+    customer_name: document.getElementById('customer-name').value,
+    customer_email: document.getElementById('customer-email').value,
+    items
+  };
+
+  const res = await fetch('/api/orders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const json = await res.json();
+
+  if (json.success) {
+    showResult(`Order #${json.data.id} placed — total RM ${json.data.total_amount.toFixed(2)}`, true);
+    cart = {};
+    renderCart();
+    loadProducts(); // refresh stock numbers
+    loadOrders();
+  } else {
+    showResult(json.error || 'Something went wrong', false);
+  }
+}
+
+function showResult(message, success) {
+  const div = document.getElementById('order-result');
+  div.style.display = 'block';
+  div.className = success ? 'success' : 'error';
+  div.textContent = message;
+}
+
+async function loadOrders() {
+  const res = await fetch('/api/orders');
+  const json = await res.json();
+  const orders = json.data || [];
+  const body = document.getElementById('orders-body');
+  body.innerHTML = '';
+  orders.forEach(o => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${o.id}</td>
+      <td>${o.customer_name}</td>
+      <td>RM ${o.total_amount.toFixed(2)}</td>
+      <td><span class="status-badge ${o.status}">${o.status}</span></td>
+      <td>${nextStatusButton(o)}</td>
+    `;
+    body.appendChild(row);
+  });
+}
+
+function nextStatusButton(order) {
+  const next = { PENDING: 'PROCESSING', PROCESSING: 'COMPLETED' }[order.status];
+  if (!next) return '';
+  return `<button onclick="advanceStatus(${order.id}, '${next}')">Mark ${next}</button>`;
+}
+
+async function advanceStatus(orderID, newStatus) {
+  await fetch(`/api/orders/${orderID}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: newStatus })
+  });
+  loadOrders();
+}
+
+document.getElementById('place-order-btn').addEventListener('click', placeOrder);
+
+loadProducts();
+loadOrders();
+</script>
+
+</body>
+</html>
